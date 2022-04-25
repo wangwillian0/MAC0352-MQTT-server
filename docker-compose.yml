@@ -1,0 +1,6 @@
+services:
+  ep1:
+    container_name: "mqtt-broker"
+    build: .
+    ports:
+      - "1883:1883"
