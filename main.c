@@ -38,16 +38,6 @@ int get_msg_len(FILE* connfile) {
     return total;
 }
 
-/* Função que ajuda a converter int para os bytes de "msg len" no formato exigido */
-void put_msg_len(int pipefd, int total) {
-    do {
-        unsigned char cur_byte = total & 0x7F;
-        total >>= 7;
-        if (total) cur_byte |= 0x80;
-        write(pipefd, &cur_byte, 1);
-    } while (total);
-}
-
 
 int main(int argc, char** argv) {
 
@@ -120,17 +110,17 @@ int main(int argc, char** argv) {
 
         /* O socket listenfd é fechado no processo filho, pois não é mais necessário.
          * connfile é utilizado para possibilitar o uso de getc e facilitar o processamento 
-         * de cada byte do pacote. */
+         * de cada byte da mensagem. */
         close(listenfd);
         FILE* connfile = fdopen(connfd, "r"); 
 
         /* Variáveis auxiliares para as "header flags", "msg len" e remain_bytes ajuda a
-         * determinar quando o pacote chega ao fim. */
+         * determinar quando a mensagem chega ao fim. */
         unsigned char header = 0;
         int msg_len = 0, remain_bytes = 0;
 
-        /* Lê o header do pacote, que deveria ser de CONNECT.
-         * O corpo inteiro deste pacote é ignorado. */
+        /* Lê o header da mensagem, que deveria ser de CONNECT.
+         * O corpo inteiro desta mensagem é ignorado. */
         header = getc(connfile);
         msg_len = remain_bytes = get_msg_len(connfile);
         while (remain_bytes--) getc(connfile);
@@ -138,7 +128,7 @@ int main(int argc, char** argv) {
         /* Manda de volta um CONNACK padrão */
         write(connfd, (char []) {0x20, 0x02, 0x00, 0x00}, 4);
 
-        /* Lê o header do e o tamanho do pacote, que deveria ser de PUBLISH ou SUBSCRIBE */
+        /* Lê o header do e o tamanho da mensagem, que deveria ser de PUBLISH ou SUBSCRIBE */
         header = getc(connfile);
         msg_len = remain_bytes = get_msg_len(connfile);
         
@@ -168,16 +158,28 @@ int main(int argc, char** argv) {
         path_len += 1+topic_len;
 
 
-        /* Para tratar o PUBLISH, a mensagem a ser enviada é lida, todos os arquvivos FIFO
+        /* Para tratar o PUBLISH, o payload a ser enviada é lida, todos os arquvivos FIFO
          * no diretório temporário correspondente ao tópico são listados, e escrever 
-         * o pacote de PUBLISH completo será escrito em cada um deles, byte por byte.*/
+         * a mensagem de PUBLISH completo será escrito em cada um deles, byte por byte.*/
         if (header >> 4 == 3) {
-            /* Lê a mensagem inteira e guarda na memória */ 
-            int content_len = remain_bytes;
-            char content[content_len + 1];
-            for (int i = 0; i < content_len; i++) content[i] = getc(connfile);
-            content[content_len] = '\0';
-            remain_bytes = 0;
+            /* packet mantém a reconstrução byte por byte da mensagem que o cliente do tipo SUB espera receber. */
+            unsigned char packet[msg_len + 10];
+            int packet_len = 0;
+            packet[packet_len++] = header;
+            
+            int aux = msg_len;
+            do {
+                unsigned char cur_byte = aux & 0x7F;
+                aux >>= 7;
+                if (aux) cur_byte |= 0x80;
+                packet[packet_len++] = cur_byte;
+            } while (aux);
+
+            packet[packet_len++] = topic_len & 0xF0;
+            packet[packet_len++] = topic_len & 0x0F;
+            memcpy(packet+packet_len, topic, topic_len);
+            packet_len += topic_len;
+            while(remain_bytes--) packet[packet_len++] = getc(connfile);
 
             /* Itera por todos os potenciais arquivos pipe de processos cuidando de clientes
              * inscritos naquele tópico e escreve todos os bytes que esses outros processos
@@ -193,13 +195,8 @@ int main(int argc, char** argv) {
                     int pipefd = open(path, O_WRONLY);
                     if (pipefd == -1) continue;
 
-                    /* Escreve no arquivo FIFO o pacote PUBLISH completo */
-                    write(pipefd, &header, 1);
-                    put_msg_len(pipefd, msg_len);
-                    char topic_len_bytes[] = {topic_len & 0xF0, topic_len & 0x0F};
-                    write(pipefd, topic_len_bytes, 2);
-                    write(pipefd, topic, topic_len);
-                    write(pipefd, content, content_len);
+                    /* Escreve no arquivo FIFO a mensagem PUBLISH completo */
+                    write(pipefd, packet, packet_len); 
                     
                     close(pipefd);
                 }
@@ -208,7 +205,7 @@ int main(int argc, char** argv) {
         }
 
         /* Para tratar o SUBSCRIBE, o arquivo FIFO correspondente deve ser lido e repassado
-         * para o socket do jeito que se encontra. Ao mesmo tempo, os pacotes PINGREQ e
+         * para o socket do jeito que se encontra. Ao mesmo tempo, as mensagens PINGREQ e
          * DISCONNECT devem ser tratados para manter a conexão ativa e controlar o fim da 
          * leitura do FIFO. Para isso o fork() é utilizado, com o processo filho cuidando
          * apenas do repasse dos bytes encontrados no arquivo FIFO.  */
@@ -228,7 +225,7 @@ int main(int argc, char** argv) {
 
             int childpid2 = fork();
 
-            /* Processo pai cuidando apenas dos pacotes do tipo PINGREQ e DISCONNECT.
+            /* Processo pai cuidando apenas das mensagens do tipo PINGREQ e DISCONNECT.
              * Note que o DISCONNECT acaba matando o processo, forçando o processo filho 
              * cuidando do arquivo FIFO a morrer também. */ 
             if (childpid2 != 0) {
