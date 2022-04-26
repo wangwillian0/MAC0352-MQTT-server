@@ -31,10 +31,14 @@ function run_pubs {
 
 
 for ((i=0;i<samples;i++)); do
+	echo "[teste $i] digite algo para continuar"
+	read line
 	filename="teste_$i"
 	monitor_stats $filename &
 	run_subs &
 	run_pubs &
+	echo "digite algo para continuar e finalizar potenciais clientes que ainda estão rodando)"
+	read line
 	killall mosquitto_pub
 	killall mosquitto_sub
 done
