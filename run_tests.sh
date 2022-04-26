@@ -37,8 +37,7 @@ for ((i=0;i<samples;i++)); do
 	monitor_stats $filename &
 	run_subs &
 	run_pubs &
-	echo "digite algo para continuar e finalizar potenciais clientes que ainda estão rodando)"
-	read line
+	sleep $duration
 	killall mosquitto_pub
 	killall mosquitto_sub
 done
