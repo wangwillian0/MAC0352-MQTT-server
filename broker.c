@@ -175,8 +175,8 @@ int main(int argc, char** argv) {
                 packet[packet_len++] = cur_byte;
             } while (aux);
 
-            packet[packet_len++] = topic_len & 0xF0;
-            packet[packet_len++] = topic_len & 0x0F;
+            packet[packet_len++] = topic_len >> 8;
+            packet[packet_len++] = topic_len & 0xFF;
             memcpy(packet+packet_len, topic, topic_len);
             packet_len += topic_len;
             while(remain_bytes--) packet[packet_len++] = getc(connfile);
